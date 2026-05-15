@@ -98,6 +98,9 @@ local defaults = {
 		enhanced_recipe_display = false,
 		enhanced_chance_display = false,
 		interrupt_clears_queue = false,
+		autoLoot = true,
+		stopOnError = true,
+		pendingTimeout = 8,
 		sound_on_empty_queue = false,
 		clamp_to_screen = true,
 		scale_tooltip = false,
@@ -797,6 +800,9 @@ function Skillet:OnEnable()
 	self:RegisterEvent("BAG_UPDATE") 				-- Fires for both bag and bank updates.
 	self:RegisterEvent("BAG_UPDATE_DELAYED")		-- Fires after all applicable BAG_UPDATE events for a specific action have been fired.
 	self:RegisterEvent("UNIT_INVENTORY_CHANGED")	-- BAG_UPDATE_DELAYED seems to have disappeared. Using this instead.
+	self:RegisterEvent("LOOT_READY")
+	self:RegisterEvent("LOOT_OPENED")
+	self:RegisterEvent("LOOT_CLOSED")
 --
 -- Events that replace *_SHOW and *_CLOSED by adding a PlayerInteractionType parameter
 --
@@ -1045,6 +1051,9 @@ function Skillet:TRADE_SKILL_UPDATE()
 	if Skillet.tradeUpdate < Skillet.db.realm.trade_wait then return end
 	if Skillet.tradeSkillFrame and Skillet.tradeSkillFrame:IsVisible() then
 		Skillet:ConfigureRecipeControls()
+	end
+	if Skillet.OnCraftDEBagUpdate then
+		Skillet:OnCraftDEBagUpdate()
 	end
 	DA.TRACE("TRADE_SKILL_UPDATE: dataSourceChanged= "..tostring(Skillet.dataSourceChanged)..", dataScanned= "..tostring(Skillet.dataScanned))
 	if Skillet.dataSourceChanged or not Skillet.dataScanned then

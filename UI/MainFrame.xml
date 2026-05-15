@@ -2274,6 +2274,27 @@
 					</OnClick>
 				</Scripts>
 			</Button>
+			<Button name="SkilletQueueAllForDEButton" inherits="UIPanelButtonTemplate" text="Queue all for DE" parent="SkilletFrame">
+				<Size>
+					<AbsDimension x="105" y="22"/>
+				</Size>
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="SkilletQueueAllButton" relativePoint="BOTTOMLEFT">
+						<Offset>
+							<AbsDimension x="0" y="-1"/>
+						</Offset>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+					</OnLoad>
+					<OnClick>
+						Skillet:InventoryFilterButtons_Hide()
+						Skillet:QueueAllItemsForDE(button)
+					</OnClick>
+				</Scripts>
+			</Button>
 			<Button name="SkilletEnchantButton" inherits="UIPanelButtonTemplate" text="Enchant" parent="SkilletFrame">
 				<Size>
 					<AbsDimension x="105" y="22"/>
@@ -2300,7 +2321,7 @@
 					<AbsDimension x="105" y="22"/>
 				</Size>
 				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="SkilletQueueAllButton" relativePoint="BOTTOMLEFT">
+					<Anchor point="TOPLEFT" relativeTo="SkilletQueueAllForDEButton" relativePoint="BOTTOMLEFT">
 						<Offset>
 							<AbsDimension x="0" y="-1"/>
 						</Offset>
@@ -2342,6 +2363,27 @@
 					</OnClick>
 				</Scripts>
 			</Button>
+			<Button name="SkilletQueueForDEButton" inherits="UIPanelButtonTemplate" text="Queue for DE" parent="SkilletFrame">
+				<Size>
+					<AbsDimension x="105" y="22"/>
+				</Size>
+				<Anchors>
+					<Anchor point="TOPRIGHT" relativeTo="SkilletQueueButton" relativePoint="BOTTOMRIGHT">
+						<Offset>
+							<AbsDimension x="0" y="-1"/>
+						</Offset>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+					</OnLoad>
+					<OnClick>
+						Skillet:InventoryFilterButtons_Hide()
+						Skillet:QueueItemsForDE(button, SkilletItemCountInputBox:GetNumber())
+					</OnClick>
+				</Scripts>
+			</Button>
 			<!--
 			#
 			# A button to create a specific number of items
@@ -2352,7 +2394,7 @@
 					<AbsDimension x="105" y="22"/>
 				</Size>
 				<Anchors>
-					<Anchor point="TOPRIGHT" relativeTo="SkilletQueueButton" relativePoint="BOTTOMRIGHT">
+					<Anchor point="TOPRIGHT" relativeTo="SkilletQueueForDEButton" relativePoint="BOTTOMRIGHT">
 						<Offset>
 							<AbsDimension x="0" y="-1"/>
 						</Offset>
@@ -2645,7 +2687,7 @@
 			# A button that starts or continues the queue
 			#
 			-->
-			<Button name="SkilletStartQueueButton" inherits="UIPanelButtonTemplate" text="Start" parent="SkilletQueueParentBase">
+			<Button name="SkilletStartQueueButton" inherits="UIPanelButtonTemplate,SecureActionButtonTemplate" text="Start" parent="SkilletQueueParentBase">
 				<Size>
 					<AbsDimension x="90" y="22"/>
 				</Size>
@@ -2659,11 +2701,16 @@
 				<Scripts>
 					<OnLoad>
 						self:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+						self:SetAttribute("pressAndHoldAction", true)
+						self:SetAttribute("useOnKeyDown", false)
 					</OnLoad>
-					<OnClick>
+					<PreClick>
+						Skillet:StartQueue_PreClick(self, button)
+					</PreClick>
+					<PostClick>
 						Skillet:InventoryFilterButtons_Hide()
-						Skillet:StartQueue_OnClick(self, button)
-					</OnClick>
+						Skillet:StartQueue_PostClick(self, button)
+					</PostClick>
 				</Scripts>
 			</Button>
 			<!--

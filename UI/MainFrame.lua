@@ -267,19 +267,20 @@ end
 
 function Skillet:EnablePauseButton()
 	DA.DEBUG(0,"EnablePauseButton()")
-	if not self.isCraft then
-		SkilletStartQueueButton:Hide()
-		SkilletPauseQueueButton:Show()
-		self.pauseQueue = false
-	end
+	SkilletStartQueueButton:Hide()
+	SkilletPauseQueueButton:Show()
+	self.pauseQueue = false
 end
 
 function Skillet:DisablePauseButton()
 	DA.DEBUG(0,"DisablePauseButton()")
-	if not self.isCraft then
-		SkilletPauseQueueButton:Hide()
-		SkilletStartQueueButton:Show()
-	end
+	SkilletPauseQueueButton:Hide()
+	SkilletStartQueueButton:Show()
+end
+
+function Skillet:IsCraftDEProcessBlocked()
+	local pending = self.craftDEPending
+	return pending and pending.stage ~= "ready"
 end
 
 function Skillet:CreateTradeSkillWindow()
@@ -350,7 +351,9 @@ function Skillet:CreateTradeSkillWindow()
 	SkilletPluginButton:SetText(L["Plugins"])
 	SkilletPluginButton:Hide()
 	SkilletCreateAllButton:SetText(L["Create All"])
+	SkilletQueueAllForDEButton:SetText("Queue all for DE")
 	SkilletQueueAllButton:SetText(L["Queue All"])
+	SkilletQueueForDEButton:SetText("Queue for DE")
 	SkilletCreateButton:SetText(L["Create"])
 	SkilletQueueButton:SetText(L["Queue"])
 	SkilletStartQueueButton:SetText(L["Process"])
@@ -635,27 +638,23 @@ function Skillet:ConfigureRecipeControls(enchant)
 		enchant = Skillet.currentTrade == 7411
 	end
 	if Skillet.isCraft then
-		if Skillet.db.profile.queue_crafts then
-			SkilletQueueButton:Show()
-			SkilletEmptyQueueButton:Show()
-			SkilletQueueParent:Show()
-		else
-			SkilletQueueButton:Hide()
-			SkilletEmptyQueueButton:Hide()
-			SkilletQueueParent:Hide()
-		end
-		SkilletQueueAllButton:Hide()
+		SkilletQueueAllButton:Show()
+		SkilletQueueButton:Show()
+		SkilletQueueParent:Show()
+		SkilletStartQueueButton:Show()
+		SkilletPauseQueueButton:Hide()
+		SkilletEmptyQueueButton:Show()
+		SkilletItemCountInputBox:Show()
+		SkilletSub10Button:Show()
+		SkilletSub1Button:Show()
+		SkilletAdd1Button:Show()
+		SkilletAdd10Button:Show()
+		SkilletClearNumButton:Show()
+		SkilletQueueOnlyButton:Show()
+		SkilletQueueAllForDEButton:Hide()
+		SkilletQueueForDEButton:Hide()
 		SkilletCreateAllButton:Hide()
 		SkilletCreateButton:Hide()
-		SkilletStartQueueButton:Hide()
-		SkilletPauseQueueButton:Hide()
-		SkilletItemCountInputBox:Hide()
-		SkilletSub10Button:Hide()
-		SkilletSub1Button:Hide()
-		SkilletAdd1Button:Hide()
-		SkilletAdd10Button:Hide()
-		SkilletClearNumButton:Hide()
-		SkilletQueueOnlyButton:Hide()
 		if Skillet.db.profile.support_crafting then
 			SkilletEnchantButton:Hide()
 		else
@@ -686,14 +685,16 @@ function Skillet:ConfigureRecipeControls(enchant)
 		SkilletQueueOnlyButton:Hide()
 		SkilletEnchantButton:Show()
 	else
-		SkilletQueueAllButton:Show()
 		SkilletQueueButton:Show()
+		SkilletEmptyQueueButton:Show()
+		SkilletQueueParent:Show()
+		SkilletQueueAllButton:Show()
+		SkilletQueueAllForDEButton:Show()
+		SkilletQueueForDEButton:Show()
 		SkilletCreateAllButton:Show()
 		SkilletCreateButton:Show()
-		SkilletQueueParent:Show()
 		SkilletPauseQueueButton:Hide()
 		SkilletStartQueueButton:Show()
-		SkilletEmptyQueueButton:Show()
 		SkilletItemCountInputBox:Show()
 		SkilletSub10Button:Show()
 		SkilletSub1Button:Show()
@@ -712,10 +713,18 @@ function Skillet:ConfigureRecipeControls(enchant)
 		SkilletStartQueueButton:Disable()
 		SkilletCreateAllButton:Disable()
 		SkilletCreateButton:Disable()
+		SkilletQueueAllForDEButton:Disable()
+		SkilletQueueForDEButton:Disable()
 	else
-		SkilletStartQueueButton:Enable()
+		if self:IsCraftDEProcessBlocked() then
+			SkilletStartQueueButton:Disable()
+		else
+			SkilletStartQueueButton:Enable()
+		end
 		SkilletCreateAllButton:Enable()
 		SkilletCreateButton:Enable()
+		SkilletQueueAllForDEButton:Enable()
+		SkilletQueueForDEButton:Enable()
 	end
 end
 
@@ -2149,6 +2158,23 @@ end
 --
 function Skillet:UpdateQueueWindow()
 	local queue = self.db.realm.queueData[self.currentPlayer]
+	local dePending = self.craftDEPending
+	if dePending and dePending.stage == "ready" then
+		self:ArmCraftDEDisenchantButton()
+		SkilletStartQueueButton:SetText("Disenchant")
+	elseif dePending and dePending.stage == "craft" then
+		self:DisarmCraftDEDisenchantButton()
+		SkilletStartQueueButton:SetText("Waiting")
+	elseif dePending and dePending.stage == "disenchant" then
+		self:DisarmCraftDEDisenchantButton()
+		SkilletStartQueueButton:SetText("Preparing")
+	elseif dePending and dePending.stage == "loot" then
+		self:DisarmCraftDEDisenchantButton()
+		SkilletStartQueueButton:SetText("Looting")
+	else
+		self:DisarmCraftDEDisenchantButton()
+		SkilletStartQueueButton:SetText(L["Process"])
+	end
 	if not queue then
 		SkilletEmptyQueueButton:Disable()
 		if self.isCraft then
@@ -2161,20 +2187,18 @@ function Skillet:UpdateQueueWindow()
 	local numItems = #queue
 	if numItems > 0 then
 		SkilletEmptyQueueButton:Enable()
-		if self.isCraft then
-			SkilletStartQueueButton:Hide()
+		SkilletStartQueueButton:Show()
+		if self:IsCraftDEProcessBlocked() then
+			SkilletStartQueueButton:Disable()
 		else
 			SkilletStartQueueButton:Enable()
 		end
 	else
 		SkilletEmptyQueueButton:Disable()
-		if self.isCraft then
-			SkilletStartQueueButton:Hide()
-		else
-			SkilletStartQueueButton:Disable()
-		end
+		SkilletStartQueueButton:Show()
+		SkilletStartQueueButton:Disable()
 	end
-	if self.queueCasting then
+	if self.queueCasting and not self.craftDEPending then
 		self:EnablePauseButton()	-- handles isCraft internally
 	else
 		self:DisablePauseButton()	-- handles isCraft internally
@@ -2220,7 +2244,22 @@ function Skillet:UpdateQueueWindow()
 			nameButton:SetID(itemIndex)
 			local queueCommand = queue[itemIndex]
 			if queueCommand then
-				queueName:SetText(tostring(queueCommand.tradeName or queueCommand.tradeID)..":"..tostring(queueCommand.recipeID))	-- In Classic, recipeID is recipeName
+				local queueLabel = tostring(queueCommand.tradeName or queueCommand.tradeID)..":"..tostring(queueCommand.recipeID)
+				if queueCommand.kind == "craftde" then
+					queueLabel = queueLabel .. " [craft -> DE]"
+					if dePending and dePending.command == queueCommand then
+						if dePending.stage == "ready" then
+							queueLabel = queueLabel .. " [disenchant ready]"
+						elseif dePending.stage == "loot" then
+							queueLabel = queueLabel .. " [looting]"
+						else
+							queueLabel = queueLabel .. " ["..tostring(dePending.stage).."]"
+						end
+					end
+				elseif queueCommand.kind == "enchant" then
+					queueLabel = queueLabel .. " [enchant]"
+				end
+				queueName:SetText(queueLabel)	-- In Classic, recipeID is recipeName
 				queueCount:SetText(queueCommand.count)
 			end
 			nameButton:Show()
@@ -3449,10 +3488,112 @@ end
 --
 -- Process button
 --
+local craftDEActionTypeRelease = (WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
+	or WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
+	or WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC) and "typerelease" or "type"
+
+function Skillet:ArmCraftDEDisenchantButton()
+	local button = SkilletStartQueueButton
+	local pending = self.craftDEPending
+	local item = pending and pending.item
+	if not button or not item or not item.bag or not item.slot then
+		return
+	end
+	local macrotext = "/cast Disenchant\n/use "..tostring(item.bag).." "..tostring(item.slot)
+	button:SetAttribute("pressAndHoldAction", true)
+	button:SetAttribute("useOnKeyDown", false)
+	button:SetAttribute("type", nil)
+	button:SetAttribute("type1", nil)
+	button:SetAttribute("typerelease", nil)
+	button:SetAttribute(craftDEActionTypeRelease, "macro")
+	button:SetAttribute("macrotext", macrotext)
+	button:SetAttribute("macrotext1", macrotext)
+end
+
+function Skillet:DisarmCraftDEDisenchantButton()
+	local button = SkilletStartQueueButton
+	if not button then
+		return
+	end
+	button:SetAttribute("type", nil)
+	button:SetAttribute("type1", nil)
+	button:SetAttribute("typerelease", nil)
+	button:SetAttribute("macrotext", nil)
+	button:SetAttribute("macrotext1", nil)
+end
+
+function Skillet:StartQueue_PreClick(button, mouse)
+	DA.DEBUG(0,"StartQueue_PreClick("..tostring(button).."), "..tostring(mouse))
+	self.craftDEClickArmed = false
+	self.craftDEClickSuppressed = false
+	local pending = self.craftDEPending
+	if pending and pending.stage ~= "ready" then
+		self.craftDEClickSuppressed = true
+		self:DisarmCraftDEDisenchantButton()
+		return
+	end
+	if not pending or not pending.item then
+		return
+	end
+	local item = pending.item
+	if not item.bag or not item.slot then
+		return
+	end
+	self.craftDEClickArmed = true
+	pending.stage = "loot"
+	pending.started = GetTime()
+end
+
+function Skillet:StartQueue_PostClick(button, mouse)
+	DA.DEBUG(0,"StartQueue_PostClick("..tostring(button).."), "..tostring(mouse))
+	if self.craftDEClickSuppressed then
+		self.craftDEClickSuppressed = false
+		self.craftDEClickArmed = false
+		self:DisarmCraftDEDisenchantButton()
+		self:UpdateQueueWindow()
+		return
+	end
+	if self.craftDEClickArmed then
+		self.craftDEClickArmed = false
+		self.queueCasting = false
+		self.processingSpell = nil
+		self.processingPosition = nil
+		self.processingCommand = nil
+		self:DisarmCraftDEDisenchantButton()
+		self:UpdateQueueWindow()
+		if C_Timer and C_Timer.After then
+			local pending = self.craftDEPending
+			C_Timer.After(5, function()
+				if Skillet.craftDEPending == pending and pending and pending.stage == "loot" then
+					pending.stage = "ready"
+					Skillet:Print("Disenchant did not open loot; rearmed")
+					Skillet:UpdateQueueWindow()
+				end
+			end)
+		end
+		return
+	end
+	if self.craftDEPending and self.craftDEPending.stage == "loot" then
+		self:Print("Waiting for disenchant loot")
+		self:UpdateQueueWindow()
+		return
+	end
+	if self.craftDEPending and self.craftDEPending.stage == "craft" then
+		self:Print("Waiting for crafted item")
+		self:UpdateQueueWindow()
+		return
+	end
+	self:StartQueue_OnClick(button, mouse)
+end
+
 function Skillet:StartQueue_OnClick(button, mouse)
 	DA.DEBUG(0,"StartQueue_OnClick("..tostring(button).."), "..tostring(mouse))
 	local mouse = GetMouseButtonClicked()
 	DA.DEBUG(0,"StartQueue_OnClick("..tostring(button).."), "..tostring(mouse))
+	if self.craftDEPending then
+		self:UpdateQueueWindow()
+		return
+	end
 	if self.queueCasting then
 		self.queueCasting = false
 	else

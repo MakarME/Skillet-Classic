@@ -21,7 +21,9 @@ local L = Skillet.L
 
 local GetItemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
 local GetItemCount = C_Item and C_Item.GetItemCount or GetItemCount
-
+local GetContainerNumSlots = C_Container and C_Container.GetContainerNumSlots or GetContainerNumSlots
+local GetContainerItemID = C_Container and C_Container.GetContainerItemID or GetContainerItemID
+local GetContainerItemInfo = C_Container and C_Container.GetContainerItemInfo or GetContainerItemInfo
 
 StaticPopupDialogs["SKILLET_QUEUE_LARGE"] = {
 	text = "Skillet-Classic\n"..L["Request to queue %s items.\n Are you sure?"],
@@ -59,8 +61,8 @@ end
 -- This is the simplest command:  iterate recipeID x count
 -- Given the tradeID and the recipeID (currently the recipe name)
 --
-function Skillet:QueueCommandIterate(recipeID, count)
-	DA.DEBUG(0,"QueueCommandIterate("..tostring(recipeID)..", "..tostring(count)..") currentTrade= "..tostring(self.currentTrade))
+function Skillet:QueueCommandIterate(recipeID, count, kind)
+	DA.DEBUG(0,"QueueCommandIterate("..tostring(recipeID)..", "..tostring(count)..", "..tostring(kind)..") currentTrade= "..tostring(self.currentTrade))
 	local newCommand = {}
 	local recipe = self:GetRecipe(recipeID)
 	local tradeName = self:GetTradeName(recipe.tradeID)
@@ -72,6 +74,7 @@ function Skillet:QueueCommandIterate(recipeID, count)
 	newCommand.recipeIndex = recipeIndex or 0
 	newCommand.count = count or 0
 	newCommand.spellID = recipe.spellID
+	newCommand.kind = kind or "craft"
 	return newCommand
 end
 
@@ -145,7 +148,7 @@ function Skillet:AddToQueue(command, first)
 	if (not command.complex) then		-- we can add this queue entry to any of the other entries
 		local added
 		for i=1,#queue,1 do
-			if queue[i].op == "iterate" and queue[i].recipeID == command.recipeID then
+			if queue[i].op == "iterate" and queue[i].recipeID == command.recipeID and (queue[i].kind or "craft") == (command.kind or "craft") then
 				queue[i].count = queue[i].count + command.count
 				added = true
 				break
@@ -163,7 +166,7 @@ function Skillet:AddToQueue(command, first)
 --check last item in queue - add current if they are the same
 --
 		local i=#queue
-		if queue[i].op == "iterate" and queue[i].recipeID == command.recipeID then
+		if queue[i].op == "iterate" and queue[i].recipeID == command.recipeID and (queue[i].kind or "craft") == (command.kind or "craft") then
 			queue[i].count = queue[i].count + command.count
 		else
 			if first then
@@ -220,6 +223,155 @@ function Skillet:QueueAppendCommand(command, queueCraftables, first)
 		DA.DEBUG(0,"QueueAppendCommand: reagentsInQueue= "..DA.DUMP1(reagentsInQueue))
 		self:AdjustInventory()
 	end
+end
+
+local function getBagStackCount(bag, slot)
+	local info = GetContainerItemInfo and GetContainerItemInfo(bag, slot)
+	if type(info) == "table" then
+		return info.stackCount or info.quantity or 1
+	end
+	if type(info) == "number" then
+		return info
+	end
+	if GetContainerItemInfo then
+		local _, count = GetContainerItemInfo(bag, slot)
+		if count then
+			return count
+		end
+	end
+	if GetContainerItemCount then
+		return GetContainerItemCount(bag, slot) or 1
+	end
+	return 1
+end
+
+function Skillet:TakeBagSnapshot()
+	local snapshot = {}
+	for bag = 0, NUM_BAG_SLOTS do
+		local slots = GetContainerNumSlots and GetContainerNumSlots(bag) or 0
+		for slot = 1, slots do
+			local itemID = GetContainerItemID and GetContainerItemID(bag, slot)
+			snapshot[bag .. ":" .. slot] = {
+				itemID = itemID,
+				count = getBagStackCount(bag, slot),
+			}
+		end
+	end
+	return snapshot
+end
+
+function Skillet:FindCraftedItems(itemID, snapshot)
+	local found = {}
+	if not itemID then
+		return found
+	end
+	for bag = 0, NUM_BAG_SLOTS do
+		local slots = GetContainerNumSlots and GetContainerNumSlots(bag) or 0
+		for slot = 1, slots do
+			local key = bag .. ":" .. slot
+			local currentItemID = GetContainerItemID and GetContainerItemID(bag, slot)
+			if currentItemID == itemID then
+				local currentCount = getBagStackCount(bag, slot)
+				local prior = snapshot and snapshot[key]
+				local wasDifferent = not prior or prior.itemID ~= itemID or (prior.count or 0) < currentCount
+				if wasDifferent then
+					table.insert(found, {
+						bag = bag,
+						slot = slot,
+						itemID = currentItemID,
+						count = currentCount,
+						quality = select(3, GetItemInfo(currentItemID)),
+					})
+				end
+			end
+		end
+	end
+	table.sort(found, function(a, b)
+		if a.bag == b.bag then
+			return a.slot < b.slot
+		end
+		return a.bag < b.bag
+	end)
+	return found
+end
+
+function Skillet:FindAnyBagItems(itemID)
+	local found = {}
+	if not itemID then
+		return found
+	end
+	for bag = 0, NUM_BAG_SLOTS do
+		local slots = GetContainerNumSlots and GetContainerNumSlots(bag) or 0
+		for slot = 1, slots do
+			local currentItemID = GetContainerItemID and GetContainerItemID(bag, slot)
+			if currentItemID == itemID then
+				table.insert(found, {
+					bag = bag,
+					slot = slot,
+					itemID = currentItemID,
+					count = getBagStackCount(bag, slot),
+					quality = select(3, GetItemInfo(currentItemID)),
+				})
+			end
+		end
+	end
+	table.sort(found, function(a, b)
+		if a.bag == b.bag then
+			return a.slot < b.slot
+		end
+		return a.bag < b.bag
+	end)
+	return found
+end
+
+function Skillet:IsDisenchantableItem(itemID, quality)
+	if not itemID then
+		return false
+	end
+	if not quality then
+		quality = select(3, GetItemInfo(itemID))
+	end
+	return quality and quality > 1 and quality < 5
+end
+
+function Skillet:QueueCraftForDEItems(button, count)
+	DA.DEBUG(0,"QueueCraftForDEItems("..tostring(button)..", "..tostring(count)..")")
+	if not self.selectedSkill then return 0 end
+	local skill = self:GetSkill(self.currentPlayer, self.currentTrade, self.selectedSkill)
+	if not skill then return 0 end
+	local recipe = self:GetRecipe(skill.id)
+	local recipeID = skill.id
+	if not count then
+		count = skill.numCraftable / (recipe.numMade or 1)
+		if count == 0 then
+			count = (skill.numCraftableVendor or 0)/ (recipe.numMade or 1)
+		end
+		if count == 0 then
+			count = (skill.numCraftableAlts or 0) / (recipe.numMade or 1)
+		end
+		self.queueCount = math.min(count, 9999)
+		if self.queueCount == 9999 then
+			StaticPopup_Show("SKILLET_QUEUE_LARGE", tostring(self.queueCount))
+			return 0
+		end
+	end
+	count = math.min(count, 9999)
+	if count > 0 then
+		if self.currentTrade and self.selectedSkill and recipe then
+			local first = false
+			if button == "RightButton" then
+				first = true
+			end
+			local queueCommand = self:QueueCommandIterate(recipeID, count, "craftde")
+			self:QueueAppendCommand(queueCommand, Skillet.db.profile.queue_craftable_reagents, first)
+		end
+	end
+	return count
+end
+
+function Skillet:QueueAllCraftForDEItems(button)
+	DA.DEBUG(0,"QueueAllCraftForDEItems("..tostring(button)..")")
+	return self:QueueCraftForDEItems(button)
 end
 
 function Skillet:RemoveFromQueue(index)
@@ -312,6 +464,7 @@ function Skillet:ProcessQueue(altMode)
 	local skillIndexLookup = self.data.skillIndexLookup[self.currentPlayer]
 	self.processingPosition = nil
 	self.processingCommand = nil
+	self.processingAltMode = altMode
 	local command
 --
 -- If any plugins have registered a ProcessQueue function, call it now
@@ -326,9 +479,10 @@ function Skillet:ProcessQueue(altMode)
 		--DA.DEBUG(1,"qpos= "..tostring(qpos)..", command= "..DA.DUMP1(command))
 		if command and command.op == "iterate" then
 			local recipe = self:GetRecipe(command.recipeID)
+			local queueKind = command.kind or "craft"
 			local craftable = true
 			local skillIndex = skillIndexLookup[command.recipeID]
-			if isClassic and recipe.tradeID == 7411 then
+			if isClassic and recipe.tradeID == 7411 and queueKind ~= "enchant" then
 				craftable = false
 			else
 				local cooldown
@@ -405,9 +559,35 @@ function Skillet:ProcessQueue(altMode)
 			self.processingSpell = self:GetRecipeName(recipeID)		-- In Classic, the recipeID is the recipeName
 			self.processingPosition = qpos
 			self.processingCommand = command
+			self.processingKind = command.kind or "craft"
 			--DA.DEBUG(1,"processingSpell= "..tostring(self.processingSpell)..", processingPosition= "..tostring(qpos)..", processingCommand= "..DA.DUMP1(command))
+			if command.kind == "craftde" or command.kind == "enchant" then
+				count = 1
+			end
+			if command.kind == "craftde" then
+				local recipe = self:GetRecipe(recipeID)
+				local itemID = recipe and recipe.itemID or command.itemID
+				if not itemID then
+					DA.WARN("craftde queue entry missing itemID for recipeID="..tostring(recipeID))
+					self.queueCasting = false
+					self.processingSpell = nil
+					self.processingPosition = nil
+					self.processingCommand = nil
+					self:RemoveFromQueue(qpos)
+					return
+				end
+				self.craftDEPending = {
+					qpos = qpos,
+					command = command,
+					itemID = itemID,
+					started = GetTime(),
+					snapshot = self:TakeBagSnapshot(),
+					startCount = GetItemCount(itemID, false) or 0,
+					stage = "craft",
+				}
+			end
 			if self.isCraft then
-				DA.DEBUG(1,"DoCraft(spell= "..tostring(recipeIndex)..", count= "..tostring(count)..") altMode= "..tostring(altMode))
+				DA.DEBUG(1,"DoCraft(spell= "..tostring(recipeIndex)..", count= "..tostring(count)..") altMode= "..tostring(altMode)..", kind= "..tostring(command.kind))
 				if self.DoCraft then
 					DoCraft(recipeIndex, count)
 				else
@@ -415,7 +595,7 @@ function Skillet:ProcessQueue(altMode)
 					DA.WARN("DoCraft(spell= "..tostring(recipeIndex)..", count= "..tostring(count)..") altMode= "..tostring(altMode))
 				end
 			else
-				if altMode then
+				if altMode and command.kind ~= "craftde" then
 					itemID, missN = Skillet:GetAutoTargetItem(tradeID, spellID)
 					if not itemID then
 						Skillet:Print(L["Skipping"],self.processingSpell,"-",L["need"],missN)
@@ -428,10 +608,13 @@ function Skillet:ProcessQueue(altMode)
 				self:EnablePauseButton()
 				DoTradeSkill(recipeIndex, count)
 			end
+			if command.kind == "craftde" then
+				self:ScheduleCraftDECheck(0.05)
+			end
 --
 -- if alt down/right click - auto use items / like vellums
 --
-			if altMode then
+			if altMode and command.kind ~= "craftde" then
 				--DA.DEBUG(0,"UseItemByName("..tostring(itemID)..")")
 				UseItemByName(itemID)
 				self.queueCasting = false
@@ -453,26 +636,31 @@ end
 --
 -- Adds the currently selected number of items to the queue
 --
-function Skillet:QueueItems(button, count)
-	DA.DEBUG(0,"QueueItems("..tostring(button)..", "..tostring(count)..")")
+function Skillet:QueueItems(button, count, kind)
+	DA.DEBUG(0,"QueueItems("..tostring(button)..", "..tostring(count)..", "..tostring(kind)..")")
 	--DA.DEBUG(1,"currentPlayer= "..tostring(self.currentPlayer)..", currentTrade= "..tostring(self.currentTrade)..", selectedSkill= "..tostring(self.selectedSkill))
 	if not self.selectedSkill then return 0 end
 	local skill = self:GetSkill(self.currentPlayer, self.currentTrade, self.selectedSkill)
 	if not skill then return 0 end
 	local recipe = self:GetRecipe(skill.id)
 	local recipeID = skill.id
+	local queueKind = kind or (self.currentTrade == 7411 and "enchant" or "craft")
 	if not count then
-		count = skill.numCraftable / (recipe.numMade or 1)
-		if count == 0 then
-			count = (skill.numCraftableVendor or 0)/ (recipe.numMade or 1)
-		end
-		if count == 0 then
-			count = (skill.numCraftableAlts or 0) / (recipe.numMade or 1)
-		end
-		self.queueCount = math.min(count, 9999)
-		if self.queueCount == 9999 then
-			StaticPopup_Show("SKILLET_QUEUE_LARGE", tostring(self.queueCount))
-			return 0
+		if queueKind == "enchant" then
+			count = SkilletItemCountInputBox:GetNumber() or 1
+		else
+			count = skill.numCraftable / (recipe.numMade or 1)
+			if count == 0 then
+				count = (skill.numCraftableVendor or 0)/ (recipe.numMade or 1)
+			end
+			if count == 0 then
+				count = (skill.numCraftableAlts or 0) / (recipe.numMade or 1)
+			end
+			self.queueCount = math.min(count, 9999)
+			if self.queueCount == 9999 then
+				StaticPopup_Show("SKILLET_QUEUE_LARGE", tostring(self.queueCount))
+				return 0
+			end
 		end
 	end
 	count = math.min(count, 9999)
@@ -483,7 +671,7 @@ function Skillet:QueueItems(button, count)
 				if button == "RightButton" then
 					first = true
 				end
-				local queueCommand = self:QueueCommandIterate(recipeID, count)
+				local queueCommand = self:QueueCommandIterate(recipeID, count, queueKind)
 				self:QueueAppendCommand(queueCommand, Skillet.db.profile.queue_craftable_reagents, first)
 			end
 		end
@@ -498,6 +686,16 @@ function Skillet:QueueAllItems(button)
 	DA.DEBUG(0,"QueueAllItems("..tostring(button)..")");
 	local count = self:QueueItems(button)						-- no argument means queue em all
 	return count
+end
+
+function Skillet:QueueItemsForDE(button, count)
+	DA.DEBUG(0,"QueueItemsForDE("..tostring(button)..", "..tostring(count)..")")
+	return self:QueueItems(button, count, "craftde")
+end
+
+function Skillet:QueueAllItemsForDE(button)
+	DA.DEBUG(0,"QueueAllItemsForDE("..tostring(button)..")")
+	return self:QueueItemsForDE(button)
 end
 
 --
@@ -547,6 +745,186 @@ function Skillet:EnchantItem()
 		end
 	end
 	self:CreateItems(nil, 1)
+end
+
+function Skillet:ScheduleCraftDECheck(delay)
+	if not C_Timer or not C_Timer.After then
+		return
+	end
+	local pending = self.craftDEPending
+	if pending and pending.checkScheduled then
+		return
+	end
+	if pending then
+		pending.checkScheduled = true
+	end
+	delay = delay or 0.15
+	C_Timer.After(delay, function()
+		if not Skillet.craftDEPending or Skillet.craftDEPending.stage ~= "craft" then
+			return
+		end
+		Skillet.craftDEPending.checkScheduled = false
+		Skillet:ContinueCraftDE()
+	end)
+end
+
+function Skillet:ContinueCraftDE()
+	local pending = self.craftDEPending
+	if not pending or pending.stage ~= "craft" then
+		return
+	end
+	local items = self:FindCraftedItems(pending.itemID, pending.snapshot)
+	if #items == 0 then
+		local currentCount = GetItemCount(pending.itemID, false) or 0
+		if currentCount > (pending.startCount or 0) then
+			items = self:FindAnyBagItems(pending.itemID)
+		end
+	end
+	if #items == 0 then
+		if GetTime() - (pending.started or 0) < (self.db.profile.pendingTimeout or 8) then
+			self:ScheduleCraftDECheck(0.1)
+			return
+		end
+		items = self:FindAnyBagItems(pending.itemID)
+	end
+	if #items == 0 then
+		self.craftDEPending = nil
+		self.queueCasting = false
+		self.processingSpell = nil
+		self.processingPosition = nil
+		self.processingCommand = nil
+		self:Print("Crafted item did not appear in bags")
+		self:UpdateTradeSkillWindow()
+		self:UpdateQueueWindow()
+		return
+	end
+	pending.items = items
+	pending.stage = "disenchant"
+	self:StartNextCraftDEDisenchant()
+end
+
+function Skillet:StartNextCraftDEDisenchant()
+	local pending = self.craftDEPending
+	if not pending or pending.stage ~= "disenchant" then
+		return
+	end
+	if not pending.items or #pending.items == 0 then
+		self:FinishCraftDEEntry()
+		return
+	end
+	local item = table.remove(pending.items, 1)
+	if not item then
+		self:FinishCraftDEEntry()
+		return
+	end
+	if not item.quality then
+		item.quality = select(3, GetItemInfo(item.itemID))
+	end
+	if not item.quality then
+		table.insert(pending.items, 1, item)
+		if GetTime() - (pending.started or 0) < (self.db.profile.pendingTimeout or 8) then
+			if C_Timer and C_Timer.After then
+				C_Timer.After(0.2, function()
+					if Skillet.craftDEPending and Skillet.craftDEPending.stage == "disenchant" then
+						Skillet:StartNextCraftDEDisenchant()
+					end
+				end)
+			end
+			return
+		end
+		self:Print("Crafted item info did not cache in time")
+		if self.db.profile.stopOnError then
+			self.craftDEPending = nil
+			self.queueCasting = false
+			self.processingSpell = nil
+			self.processingPosition = nil
+			self.processingCommand = nil
+			self:UpdateTradeSkillWindow()
+			self:UpdateQueueWindow()
+		else
+			self:StartNextCraftDEDisenchant()
+		end
+		return
+	end
+	if not self:IsDisenchantableItem(item.itemID, item.quality) then
+		self:Print("Crafted item is not disenchantable")
+		if self.db.profile.stopOnError then
+			self.craftDEPending = nil
+			self.queueCasting = false
+			self.processingSpell = nil
+			self.processingPosition = nil
+			self.processingCommand = nil
+			self:UpdateTradeSkillWindow()
+			self:UpdateQueueWindow()
+			return
+		end
+		self:StartNextCraftDEDisenchant()
+		return
+	end
+	pending.item = item
+	pending.stage = "ready"
+	self.queueCasting = false
+	self.processingSpell = nil
+	self.processingPosition = nil
+	self.processingCommand = nil
+	self:UpdateTradeSkillWindow()
+	self:UpdateQueueWindow()
+end
+
+function Skillet:FinishCraftDEEntry()
+	local pending = self.craftDEPending
+	if not pending then
+		return
+	end
+	local qpos = pending.qpos or self.processingPosition or 1
+	local queue = self.db.realm.queueData[self.currentPlayer]
+	local command = pending.command or queue[qpos]
+	self.craftDEPending = nil
+	self.queueCasting = false
+	self.processingSpell = nil
+	self.processingPosition = nil
+	self.processingCommand = nil
+	if command and command.op == "iterate" then
+		command.count = (command.count or 1) - 1
+		if command.count < 1 then
+			self:RemoveFromQueue(qpos)
+		end
+	end
+	self:UpdateTradeSkillWindow()
+	self:UpdateQueueWindow()
+end
+
+function Skillet:OnCraftDEBagUpdate()
+	if self.craftDEPending and self.craftDEPending.stage == "craft" then
+		self:ContinueCraftDE()
+	end
+end
+
+function Skillet:LOOT_READY()
+	if not self.craftDEPending or self.craftDEPending.stage ~= "loot" then
+		return
+	end
+	if self.db.profile.autoLoot and GetNumLootItems and GetNumLootItems() > 0 then
+		for lootSlot = GetNumLootItems(), 1, -1 do
+			local _, lootName, _, _, _, locked = GetLootSlotInfo(lootSlot)
+			if lootName and not locked then
+				LootSlot(lootSlot)
+			end
+		end
+		if CloseLoot then
+			CloseLoot()
+		end
+	end
+end
+
+function Skillet:LOOT_OPENED()
+	self:LOOT_READY()
+end
+
+function Skillet:LOOT_CLOSED()
+	if self.craftDEPending and self.craftDEPending.stage == "loot" then
+		self:FinishCraftDEEntry()
+	end
 end
 
 function Skillet:UNIT_SPELLCAST_SENT(event, unit, target, castGUID)
@@ -713,6 +1091,28 @@ function Skillet:StopCast(spell, success)
 				return
 			end
 			if command.op == "iterate" then
+				local queueKind = command.kind or "craft"
+				if queueKind == "craftde" and (not command.step or command.step == "craft") then
+					DA.DEBUG(0,"StopCast craft-for-DE craft step complete")
+					self.queueCasting = false
+					self.processingSpell = nil
+					self.processingPosition = nil
+					self.processingCommand = nil
+					if self.craftDEPending then
+						self.craftDEPending.stage = "craft"
+					end
+					self:ScheduleCraftDECheck(0.15)
+					self:AdjustInventory()
+					return
+				elseif queueKind == "craftde" and self.craftDEPending and self.craftDEPending.stage == "loot" then
+					DA.DEBUG(0,"StopCast craft-for-DE disenchant step complete")
+					self.queueCasting = false
+					self.processingSpell = nil
+					self.processingPosition = nil
+					self.processingCommand = nil
+					self:AdjustInventory()
+					return
+				end
 				command.count = command.count - 1
 				DA.DEBUG(0,"StopCast "..tostring(command.count))
 				if command.count < 1 then
@@ -734,6 +1134,13 @@ function Skillet:StopCast(spell, success)
 						if self.db.profile.flash_on_remove_queue then FlashClientIcon() end
 					end
 					DA.DEBUG(0,"removed successful queue command at "..tostring(qpos)..", qsize= "..tostring(qsize))
+				elseif queueKind == "enchant" then
+					self.queueCasting = false
+					self.processingSpell = nil
+					self.processingPosition = nil
+					self.processingCommand = nil
+					self:ProcessQueue(self.processingAltMode)
+					return
 				end
 			end
 		else
@@ -743,6 +1150,9 @@ function Skillet:StopCast(spell, success)
 			self.processingSpell = nil
 			self.processingPosition = nil
 			self.processingCommand = nil
+			if self.craftDEPending then
+				self.craftDEPending = nil
+			end
 			if self.db.profile.interrupt_clears_queue and qpos and command and not command.skipped then -- if qpos and not self.pauseQueue then
 				self:RemoveFromQueue(qpos)
 				DA.DEBUG(0,"removed failed queue command at "..tostring(qpos))
